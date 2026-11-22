@@ -447,3 +447,44 @@ def plot_proxy_profile_fit(profile_csv: Path, proxy, out_dir: Path) -> list[Path
     ax.legend(loc="upper left", ncols=2)
     fig.tight_layout()
     return _save(fig, out_dir, "proxy_profile_fit")
+
+
+def plot_covariance_diagnostic(table: pd.DataFrame, out_dir: Path) -> list[Path]:
+    """One figure per budget: relative covariance distance of each method's subset to the real
+    data (PCA space and full space), with the selection stages' starting sets as grey references."""
+    if table.empty:
+        return []
+    subsets = table[table["kind"] == "subset"]
+    refs = table[table["kind"] == "reference"]
+    written = []
+    panels = [("rel_dist_pca", "PCA space (what covariance matching optimises)"),
+              ("rel_dist_full", "Full embedding space")]
+    for budget, sb in subsets.groupby("budget_sec", dropna=False):
+        g = sb.groupby("method")[[c for c, _ in panels]].mean()
+        methods = method_order(g.index)
+        labels = [label(m) for m in methods] + list(refs["run_id"])
+        colors = [color(m) for m in methods] + [POOL_GREY] * len(refs)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 0.5 * len(labels) + 1.8), sharey=True)
+        y = np.arange(len(labels))[::-1]
+        for ax, (col, title) in zip(axes, panels):
+            vals = np.r_[g[col].reindex(methods).values, refs[col].values]
+            ax.barh(y, vals, height=0.62, color=colors, edgecolor=SURFACE, linewidth=2)
+            xmax = float(np.nanmax(vals)) * 1.2 if np.isfinite(np.nanmax(vals)) else 1.0
+            for yi, v in zip(y, vals):
+                if np.isfinite(v):
+                    ax.text(v + 0.01 * xmax, yi, f"{v:.3f}", va="center", fontsize=8.5)
+            if len(refs):
+                ax.axhline(y[len(methods) - 1] - 0.5, color=INK_2, lw=0.8, ls=":")
+            ax.set_xlim(0, xmax)
+            ax.set_yticks(y, labels)
+            ax.set_xlabel("Relative covariance distance (lower = closer to real data)")
+            ax.set_title(title, loc="left", fontsize=10)
+            ax.grid(axis="y", visible=False)
+        btxt = f"budget {budget:.0f} s" if np.isfinite(budget) else "all budgets"
+        fig.suptitle(f"Covariance shift of each selected subset vs the real train data ({btxt})\n"
+                     "distance = ‖Cov(subset) − Cov(real)‖_F / ‖Cov(real)‖_F;  grey = reference sets",
+                     x=0.01, ha="left", fontsize=11, fontweight="bold")
+        fig.tight_layout()
+        tag = config.budget_tag(budget) if np.isfinite(budget) else "all"
+        written += _save(fig, out_dir, f"covariance_shift_b{tag}")
+    return written

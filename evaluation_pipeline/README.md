@@ -92,6 +92,58 @@ Every script has `--help`.
 
 ---
 
+## After the GPU run: covariance diagnostic (optional, CPU only)
+
+`scripts/07_covariance_diagnostic.py` measures how close each method's selected synthetic subset is to the covariance of the real training data. This is the quantity covariance matching minimises. It answers questions like:
+- Do the LR+CM subsets really stay close to the real data?
+- Does the time-aware knapsack keep or undo the covariance matching?
+
+It needs **no GPU and no re-training**: it only reads the subsets the Kaggle or Colab run saved, and it takes about 10 seconds plus the time to load the embeddings.
+
+**1. Get the results of the run.**
+- **If the run pushed its results** (`PUSH_RESULTS_TO_BRANCH = True`), just pull the branch. The results are already in `evaluation_pipeline/outputs/`.
+- **Otherwise,** download `hadl_results.zip` from the Kaggle version's **Output** tab and unzip it to a folder *outside* the repository, for example:
+  ```bash
+  unzip hadl_results.zip -d ~/hadl_kaggle_run        # -> ~/hadl_kaggle_run/outputs/...
+  ```
+  On Windows, right-click → Extract All works too.
+
+**2. Get the code** (skip if you already have the branch):
+```bash
+git clone -b claude/dazzling-gauss-bqp5gy https://github.com/rahul-y-in/hadl_courseproject.git
+cd hadl_courseproject
+```
+
+**3. Get the two embedding files.** They are not on GitHub because `.gitignore` excludes `*.pt`. Put them in `embedding_generation/`:
+
+| File | Who has it | Size |
+|---|---|---|
+| `embedding_generation/odia_embeddings.pt` | Aditya Jain (all 216,394 synthetic rows) | ~665 MB |
+| `embedding_generation/odia_real_train_embeddings.pt` | Vanshika (written by `covariance_matching.py`) | ~3 MB |
+
+The easiest route is to ask Vanshika for the second file. To recreate it yourself instead, run `python covariance_matching/covariance_matching.py` once. It also needs `low_rank_method/odia_low_rank_run/final_weighted_train_draws_embeddings.pt` from Aditya Jain, plus the e5 embedding model, which is downloaded automatically.
+
+**4. Install the CPU packages and run:**
+```bash
+pip install numpy pandas pyarrow matplotlib torch
+python evaluation_pipeline/scripts/07_covariance_diagnostic.py --outputs ~/hadl_kaggle_run/outputs
+# results pushed to the branch instead:  python evaluation_pipeline/scripts/07_covariance_diagnostic.py
+```
+If the `.pt` files are elsewhere, add `--synth_emb PATH --real_emb PATH`. Use `--all_budgets` to include every budget folder.
+
+**5. Output** (written into the same `outputs/` folder):
+- `results/covariance_diagnostic.csv` and `.md`: one row per selected subset, plus reference rows for the whole low-rank pool and the covariance-matched candidates (all, top 1,772, top 3,544).
+- `figures/covariance_shift_b<B>.png` and `.pdf`: a bar chart for each budget.
+
+**How to read it.** Each value is ‖Cov(subset) − Cov(real)‖_F / ‖Cov(real)‖_F, and lower means closer to the real data.
+- The **PCA-space** column is what covariance matching optimises (64 dimensions, as in `covariance_matching.py`).
+- The **full-space** column (768 dimensions) also covers the directions it does not control.
+- Comparisons to make:
+  - `quality_only` vs `proposed_knapsack`: what the time-aware choice does to the match.
+  - `cov_match_only` vs `low_rank_only`: the effect of covariance matching on its own.
+  - Both against `random` and the grey reference rows.
+- The distance alone does not show better QA scores. Read it together with the F1 results.
+
 ## 2. What is compared
 
 All methods get **the same synthetic training-time budget B** (proxy-predicted seconds per epoch). They are trained with the same recipe on **real train (886 rows) + the selected synthetic subset**, and evaluated on the real IndicQA Odia **validation (195)** and **test (176)** splits.
@@ -180,7 +232,8 @@ Run ids look like `proposed_knapsack_b8605_s42`, meaning method, budget in secon
 | `selection_token_lengths_b<B>` | Length distribution of the selected examples. |
 | `utility_vs_cost_b<B>` | Why the knapsack picks more examples (high u/c). |
 | `budget_sweep_total_utility`, `budget_sweep_num_selected` | The selection objective across budgets (no GPU needed). |
-| `budget_sweep_cov_shift_rel` | Covariance distance to the real data, when the embedding `.pt` files are present. |
+| `budget_sweep_cov_shift_rel` | Covariance distance to the real data, when the embedding `.pt` files are present during step 2. |
+| `covariance_shift_b<B>` | The same per method, computed after the run by `scripts/07_covariance_diagnostic.py`. |
 | `pipeline_overhead` | Selection pipeline overhead plus training cost. |
 
 **Already produced (CPU):** `outputs/selections/` and the selection and proxy figures in `outputs/figures/` are committed. At the default budget, the knapsack selects **3,433** examples with Σu = 1,902. The no-time-proxy baseline selects 1,630 examples with Σu = 1,223, and random selects 2,152 examples with Σu = 447.
@@ -232,13 +285,14 @@ hadl_eval/   config.py (paths, hyper-parameters, colours) · data.py · prompts.
              time_proxy.py · pool.py · knapsack.py · selection.py · diagnostics.py
              modeling.py · training.py · inference.py · metrics.py · results.py · plotting.py
 scripts/     01_build_pool · 02_select_subsets · 03_train · 04_evaluate · 05_aggregate · 06_make_plots
+             07_covariance_diagnostic (optional, after the GPU run)
 tests/       unit tests (pytest) + smoke_end_to_end.sh (all 6 steps on CPU with a tiny random Qwen3)
 notebooks/   run_pipeline_kaggle.ipynb · run_pipeline_colab.ipynb
 configs/     overhead_times.json
 ```
 
 ```bash
-python -m pytest -q tests                      # 46 unit tests, ~5 s
+python -m pytest -q tests                      # 47 unit tests, ~5 s
 bash tests/smoke_end_to_end.sh                 # full pipeline on CPU with a tiny model, incl. the 2-GPU split, ~5 min
 ```
 
