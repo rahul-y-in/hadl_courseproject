@@ -5,13 +5,21 @@ import gc
 import os
 
 
+def native_bf16() -> bool:
+    import torch
+
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
+
+
 def resolve_device_dtype(dtype_name: str = "auto"):
     import torch
 
     if torch.cuda.is_available():
         device = "cuda"
         name = torch.cuda.get_device_name(0)
-        auto = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        # Native bf16 needs compute capability >= 8.0 (A100, L4, H100). torch.cuda.is_bf16_supported()
+        # also returns True on T4/P100, where bf16 is only *emulated* and several times slower.
+        auto = torch.bfloat16 if native_bf16() else torch.float16
     elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         device, name, auto = "mps", "Apple Silicon MPS", torch.float16
     else:

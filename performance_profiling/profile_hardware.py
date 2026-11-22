@@ -84,7 +84,9 @@ def get_device_and_dtype():
     if torch.cuda.is_available():
         device = "cuda:0"
         gpu_name = torch.cuda.get_device_name(0)
-        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        # bf16 only where it is native (compute capability >= 8.0); T4/P100 would emulate it slowly.
+        native_bf16 = torch.cuda.get_device_capability(0)[0] >= 8
+        dtype = torch.bfloat16 if native_bf16 else torch.float16
     elif torch.backends.mps.is_available():
         device = "mps"
         gpu_name = "Apple Silicon MPS (Qwen3-1.7B 28-Layer Scaled)"
