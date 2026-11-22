@@ -6,6 +6,9 @@
 #   SEEDS="42 43 44" BUDGET_X_REAL="0.5 1 2" METHODS=all REFERENCE="real_only" bash evaluation_pipeline/run_pipeline.sh
 #   STEPS="5 6" bash evaluation_pipeline/run_pipeline.sh     # only aggregate + plot
 #
+#   Kaggle 2xT4:
+#   PROFILE=1 GPUS=2 BATCH=2 ACCUM=8 EVAL_BS=4 REFERENCE=real_only bash evaluation_pipeline/run_pipeline.sh
+#
 # Environment variables (all optional):
 #   STEPS          which steps to run (default "0 1 2 3 4 5 6"; step 0 runs only with PROFILE=1)
 #   PROFILE=1      re-profile Qwen3-1.7B LoRA step time on the local GPU and use that proxy
@@ -15,10 +18,14 @@
 #   SEEDS          training / random-selection seeds (default "42")
 #   METHODS        methods to train: "random quality_only proposed_knapsack" (default) or "all"
 #   REFERENCE      extra reference runs, e.g. "real_only"
-#   DTYPE          auto | bf16 | fp16 | fp32 (default auto)
+#   DTYPE          auto | bf16 | fp16 | fp32 (default auto: bf16 on A100/L4, fp16 on T4/P100)
 #   EPOCHS         training epochs (default 1)
-#   EVAL_BS        evaluation batch size (default 8; lower it on a T4 if you hit OOM)
-#   NPROC          GPUs for training via torchrun DDP (default 1; use 2 on a dual-T4 Kaggle box)
+#   BATCH, ACCUM   per-GPU micro-batch and gradient accumulation (default 4 x 4; use 2 x 8 on 16 GB GPUs)
+#   EVAL_BS        evaluation batch size (default 8; use 4 on a 16 GB GPU)
+#   GPUS           number of GPUs to use in parallel: the job list is split, one single-GPU
+#                  process per GPU (default 1; use 2 on Kaggle 2xT4). Each run is still timed on one GPU.
+#   MODEL_ID       base model (default Qwen/Qwen3-1.7B)
+#   TRAIN_EXTRA, EVAL_EXTRA   extra arguments for scripts/03_train.py / 04_evaluate.py (debugging)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,21 +37,55 @@ METHODS="${METHODS:-random quality_only proposed_knapsack}"
 REFERENCE="${REFERENCE:-}"
 DTYPE="${DTYPE:-auto}"
 EPOCHS="${EPOCHS:-1}"
+BATCH="${BATCH:-4}"
+ACCUM="${ACCUM:-4}"
 EVAL_BS="${EVAL_BS:-8}"
+GPUS="${GPUS:-1}"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen3-1.7B}"
+TRAIN_EXTRA="${TRAIN_EXTRA:-}"
+EVAL_EXTRA="${EVAL_EXTRA:-}"
 BUDGET_X_REAL="${BUDGET_X_REAL:-1.0}"
 USER_PROXY="${PROXY_JSON:-}"
 PROXY_JSON="${PROXY_JSON:-$ROOT/performance_profiling/time_proxy_model.json}"
-NPROC="${NPROC:-1}"
 OUT="${HADL_OUTPUT_ROOT:-$HERE/outputs}"
+LOG_DIR="$OUT/logs"
+mkdir -p "$LOG_DIR"
 
 has_step() { [[ " $STEPS " == *" $1 "* ]]; }
+
+# Run "$@" once per GPU with --shard i/GPUS and CUDA_VISIBLE_DEVICES=i; fail if any shard fails.
+run_sharded() {
+  local name="$1"; shift
+  if [[ "$GPUS" -le 1 ]]; then
+    "$@"
+    return
+  fi
+  local pids=() i
+  for ((i = 0; i < GPUS; i++)); do
+    echo "  shard $i/$GPUS on GPU $i -> log: $LOG_DIR/${name}_shard$i.log"
+    CUDA_VISIBLE_DEVICES=$i "$@" --shard "$i/$GPUS" > "$LOG_DIR/${name}_shard$i.log" 2>&1 &
+    pids+=($!)
+  done
+  local failed=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "!! shard $i of $name FAILED - last lines of its log:"
+      tail -n 30 "$LOG_DIR/${name}_shard$i.log" || true
+      failed=1
+    else
+      tail -n 3 "$LOG_DIR/${name}_shard$i.log" || true
+    fi
+  done
+  return $failed
+}
+
 cd "$HERE"
 
 if has_step 0 && [[ "${PROFILE:-0}" == "1" ]]; then
   echo "=== Step 0: profile LoRA step time on this GPU and fit the time proxy"
   PROF_DIR="$OUT/profiling"
   mkdir -p "$PROF_DIR"
-  (cd "$PROF_DIR" && "$PY" "$ROOT/performance_profiling/profile_hardware.py" \
+  (cd "$PROF_DIR" && CUDA_VISIBLE_DEVICES=0 "$PY" "$ROOT/performance_profiling/profile_hardware.py" \
                   && "$PY" "$ROOT/performance_profiling/fit_time_proxy.py")
   PROXY_JSON="$PROF_DIR/time_proxy_model.json"
   export HADL_PROFILING_CSV="$PROF_DIR/profiling_results.csv"
@@ -56,8 +97,8 @@ elif [[ -z "$USER_PROXY" && -f "$OUT/profiling/time_proxy_model.json" ]]; then
 fi
 
 if has_step 1; then
-  echo "=== Step 1: build the costed candidate pool"
-  "$PY" scripts/01_build_pool.py --proxy_json "$PROXY_JSON"
+  echo "=== Step 1: build the costed candidate pool (cost assumes micro-batch $BATCH)"
+  "$PY" scripts/01_build_pool.py --proxy_json "$PROXY_JSON" --batch_size "$BATCH"
 fi
 
 if has_step 2; then
@@ -70,17 +111,18 @@ if has_step 2; then
 fi
 
 if has_step 3; then
-  echo "=== Step 3: fine-tune Qwen3-1.7B + LoRA"
+  echo "=== Step 3: fine-tune Qwen3-1.7B + LoRA on $GPUS GPU(s)"
   REF_ARGS=()
   [[ -n "$REFERENCE" ]] && REF_ARGS=(--reference_runs $REFERENCE)
-  if [[ "$NPROC" -gt 1 ]]; then LAUNCH=(torchrun --nproc_per_node "$NPROC"); else LAUNCH=("$PY"); fi
-  "${LAUNCH[@]}" scripts/03_train.py --methods $METHODS ${REF_ARGS[@]+"${REF_ARGS[@]}"} --seeds $SEEDS --dtype "$DTYPE" \
-        --epochs "$EPOCHS" --proxy_json "$PROXY_JSON"
+  run_sharded train "$PY" scripts/03_train.py --methods $METHODS ${REF_ARGS[@]+"${REF_ARGS[@]}"} --seeds $SEEDS \
+        --dtype "$DTYPE" --epochs "$EPOCHS" --batch_size "$BATCH" --grad_accum "$ACCUM" --proxy_json "$PROXY_JSON" \
+        --model_id "$MODEL_ID" $TRAIN_EXTRA
 fi
 
 if has_step 4; then
-  echo "=== Step 4: evaluate on the real validation + test splits"
-  "$PY" scripts/04_evaluate.py --splits validation test --dtype "$DTYPE" --batch_size "$EVAL_BS"
+  echo "=== Step 4: evaluate on the real validation + test splits on $GPUS GPU(s)"
+  run_sharded eval "$PY" scripts/04_evaluate.py --splits validation test --dtype "$DTYPE" --batch_size "$EVAL_BS" \
+        --model_id "$MODEL_ID" $EVAL_EXTRA
 fi
 
 if has_step 5; then
@@ -93,4 +135,4 @@ if has_step 6; then
   "$PY" scripts/06_make_plots.py --proxy_json "$PROXY_JSON"
 fi
 
-echo "Done. Tables: $OUT/results   Figures: $OUT/figures"
+echo "Done. Tables: $OUT/results   Figures: $OUT/figures   Logs: $LOG_DIR"

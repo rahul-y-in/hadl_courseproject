@@ -6,6 +6,7 @@ pandas>=2.0
 pyarrow>=14
 matplotlib>=3.7
 tqdm>=4.66
+jinja2>=3.1           # needed by tokenizer.apply_chat_template
 packaging>=23
 transformers>=4.51      # Qwen3 support starts at 4.51 (tested on 5.x as well)
 torch>=2.2

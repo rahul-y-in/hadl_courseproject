@@ -33,6 +33,7 @@ def main():
     ap.add_argument("--max_eval_samples", type=int, default=-1, help="debug: first N examples per split")
     ap.add_argument("--n_boot", type=int, default=2000)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--shard", default=None, help="'i/n': evaluate every n-th model starting at i (one process per GPU)")
     args = ap.parse_args()
 
     if args.runs is None:
@@ -49,6 +50,9 @@ def main():
         df = load_real_split(s)
         splits[s] = df.head(args.max_eval_samples) if args.max_eval_samples > 0 else df
 
+    shard_i, shard_n = config.parse_shard(args.shard)
+    targets = targets[shard_i::shard_n]
+    print(f"{len(targets)} model(s) to evaluate in shard {shard_i}/{shard_n}: {[t[0] for t in targets]}")
     for run_id, adapter in targets:
         todo = [s for s in args.splits
                 if args.overwrite or not (config.EVAL_DIR / run_id / f"{s}_metrics.json").is_file()]

@@ -9,7 +9,8 @@ Outputs per run: outputs/runs/<run_id>/{adapter/, training_metrics.json, log_his
 
     python scripts/03_train.py --seeds 42                                   # headline methods
     python scripts/03_train.py --methods all --reference_runs real_only    # + ablations / references
-    # dual GPU (DDP):  torchrun --nproc_per_node 2 scripts/03_train.py ...
+    # two GPUs, one job list split across them (recommended on Kaggle 2xT4):
+    CUDA_VISIBLE_DEVICES=0 python scripts/03_train.py --shard 0/2 &  CUDA_VISIBLE_DEVICES=1 python scripts/03_train.py --shard 1/2
 """
 import argparse
 import json
@@ -47,6 +48,8 @@ def main():
     ap.add_argument("--proxy_json", default=str(config.TIME_PROXY_JSON))
     ap.add_argument("--no_step_timing", action="store_true")
     ap.add_argument("--overwrite", action="store_true", help="retrain runs that already have results")
+    ap.add_argument("--shard", default=None,
+                    help="'i/n': run only every n-th job starting at i (one process per GPU, e.g. on Kaggle 2xT4)")
     args = ap.parse_args()
 
     methods = config.METHODS if args.methods == ["all"] else args.methods
@@ -63,6 +66,9 @@ def main():
             for m in methods:
                 jobs.append((config.run_id_for(m, b, seed), m, b, seed))
 
+    shard_i, shard_n = config.parse_shard(args.shard)
+    jobs = jobs[shard_i::shard_n]
+    print(f"{len(jobs)} training job(s) for shard {shard_i}/{shard_n}: {[j[0] for j in jobs]}")
     summaries = []
     for run_id, method, budget, seed in jobs:
         out_dir = config.RUNS_DIR / run_id
@@ -95,7 +101,7 @@ def main():
 
     if is_main_process() and summaries:
         config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        (config.RUNS_DIR / "last_training_batch_summary.json").write_text(json.dumps(summaries, indent=2, default=str))
+        (config.RUNS_DIR / f"last_training_batch_summary_shard{shard_i}.json").write_text(json.dumps(summaries, indent=2, default=str))
 
 
 if __name__ == "__main__":

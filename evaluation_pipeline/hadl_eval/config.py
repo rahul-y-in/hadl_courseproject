@@ -145,3 +145,16 @@ def budget_tag(budget_sec: float | None) -> str:
     if budget_sec is None:
         return "none"
     return str(int(budget_sec)) if float(budget_sec).is_integer() else str(budget_sec).replace(".", "p")
+
+
+def parse_shard(spec: str | None) -> tuple[int, int]:
+    """'0/2' -> (0, 2). Lets several single-GPU processes split the job list (one per GPU)."""
+    if not spec:
+        return 0, 1
+    try:
+        i, n = (int(x) for x in spec.split("/"))
+    except ValueError as exc:
+        raise ValueError(f"--shard must look like 'i/n', got {spec!r}") from exc
+    if not 0 <= i < n:
+        raise ValueError(f"--shard index must be in [0, n), got {spec!r}")
+    return i, n

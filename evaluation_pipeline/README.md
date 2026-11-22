@@ -20,7 +20,33 @@ Everything except steps 3 and 4 runs on a laptop CPU in about 2 minutes. Steps 3
 
 ## 1. Quick start
 
-### On a cloud GPU (recommended)
+### On Kaggle (free 2×T4), from this branch
+
+1. Open https://www.kaggle.com/code → **New Notebook** → **File → Import Notebook**, and give it this link:
+   `https://github.com/rahul-y-in/hadl_courseproject/blob/claude/dazzling-gauss-bqp5gy/evaluation_pipeline/notebooks/run_pipeline_kaggle.ipynb`
+   If the link option is not offered, download that file from GitHub and upload it instead. The notebook itself clones the code from this branch.
+2. In the right-hand panel, open **Settings**:
+   - **Accelerator:** GPU T4 x2
+   - **Internet:** On (needs a phone-verified Kaggle account)
+3. **Save Version → Save & Run All (Commit)**. This runs unattended for up to 12 h. The default configuration should take roughly 3–5 h; this is an estimate.
+4. Results appear in the notebook's **Output** tab (`outputs/` and `hadl_results.zip`).
+
+To have Kaggle commit the results back to this branch:
+- add a Kaggle secret `GITHUB_TOKEN` (a GitHub token with *Contents: read & write* on the repo);
+- set `PUSH_RESULTS_TO_BRANCH = True` in the notebook's first code cell.
+
+The notebook detects the hardware and sets these automatically:
+
+| Setting | Value on 16 GB GPUs | Why |
+|---|---|---|
+| `GPUS=2` | — | Two single-GPU processes, each training or evaluating different runs. Every run is still timed on one GPU, as the proxy assumes. |
+| `BATCH=2 ACCUM=8` | effective batch 16 | Fits 16 GB. |
+| `EVAL_BS=4` | — | Fits 16 GB. |
+| dtype | fp16 | T4 has no bf16. |
+
+Versions are pinned to ones tested with this pipeline: `transformers 4.57.*`, `peft 0.22.*`.
+
+### On Colab
 
 Open `notebooks/run_pipeline_colab.ipynb` in Colab or Kaggle and run all cells.
 
@@ -40,9 +66,11 @@ PROFILE=1 SEEDS="42" REFERENCE="real_only" bash evaluation_pipeline/run_pipeline
 | `SEEDS` | `42` | Seeds for training and for the random baseline. Use `"42 43 44"` for error bars. |
 | `METHODS` | the three headline methods | Set `all` to add the `low_rank_only` and `cov_match_only` ablations. |
 | `REFERENCE` | — | `real_only` also fine-tunes on the real data alone. |
-| `NPROC` | `1` | Use `2` on Kaggle 2×T4 (torchrun DDP). |
+| `GPUS` | `1` | Use `2` on Kaggle 2×T4. The job list is split across GPUs, with one single-GPU process each. |
+| `BATCH`, `ACCUM` | `4`, `4` | Use `2`, `8` on 16 GB GPUs. The effective batch is the same, and the proxy cost uses `BATCH`. |
 | `DTYPE` | `auto` | `auto` picks bf16 on A100/L4 and fp16 on T4. Use `fp32` if fp16 gives NaN losses. |
 | `EVAL_BS` | `8` | Evaluation batch size. Use 4 on a T4. |
+| `MODEL_ID`, `TRAIN_EXTRA`, `EVAL_EXTRA` | — | Model override and extra arguments for scripts 03 and 04 (debugging; used by the smoke test). |
 | `STEPS` | `0 1 2 3 4 5 6` | For example, `STEPS="5 6"` only re-aggregates and re-plots. |
 
 Finished runs and evaluations are skipped automatically. After a Colab disconnect, re-running the same command resumes where it stopped.
@@ -170,7 +198,7 @@ These were found while connecting the stages. The original files are left untouc
 5. **Different train and eval prompts.** Training and evaluation used different system prompts. Both now use `hadl_eval/prompts.py`.
 6. **Synthetic answer format.** Synthetic answers always end with `।`, while IndicQA answers are bare spans. The trailing punctuation is now stripped from targets.
 7. **fp16 on T4.** fp16 training on T4 needs the LoRA weights in fp32 (otherwise "Attempting to unscale FP16 gradients"). The weights are now cast.
-8. **Dual-GPU split.** `device_map="auto"` on 2×T4 splits the model across GPUs and distorts timings. Now there is one GPU per process, and DDP via torchrun.
+8. **Dual-GPU split.** `device_map="auto"` on 2×T4 splits the model across GPUs and distorts timings. Now each process uses exactly one GPU, and two GPUs run different jobs in parallel (`GPUS=2`).
 9. **Evaluation size.** Evaluation previously used 10 validation examples with batch size 1. It now runs the full splits batched, with CIs.
 
 The candidate pool was also checked for leakage. **0** of the 33,104 candidates share an 8-word shingle with a real validation or test passage, and 1 of the 30,000 random-pool rows did and was dropped.
@@ -205,13 +233,13 @@ hadl_eval/   config.py (paths, hyper-parameters, colours) · data.py · prompts.
              modeling.py · training.py · inference.py · metrics.py · results.py · plotting.py
 scripts/     01_build_pool · 02_select_subsets · 03_train · 04_evaluate · 05_aggregate · 06_make_plots
 tests/       unit tests (pytest) + smoke_end_to_end.sh (all 6 steps on CPU with a tiny random Qwen3)
-notebooks/   run_pipeline_colab.ipynb
+notebooks/   run_pipeline_kaggle.ipynb · run_pipeline_colab.ipynb
 configs/     overhead_times.json
 ```
 
 ```bash
 python -m pytest -q tests                      # 46 unit tests, ~5 s
-bash tests/smoke_end_to_end.sh                 # full pipeline on CPU with a tiny model, ~5 min
+bash tests/smoke_end_to_end.sh                 # full pipeline on CPU with a tiny model, incl. the 2-GPU split, ~5 min
 ```
 
 The smoke test runs training, evaluation, aggregation and plotting end to end without a GPU. Its scores are meaningless, because the tiny model is random. It exists to check that every code path executes. Set `HADL_OUTPUT_ROOT` to write outputs elsewhere, as the smoke test does.
