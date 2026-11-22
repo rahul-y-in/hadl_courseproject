@@ -1,0 +1,19 @@
+# Evaluation pipeline (Rahul / Person 6). Tested with Python 3.10-3.13.
+# Steps 1, 2, 5, 6 (CPU): numpy, pandas, pyarrow, matplotlib, transformers (tokenizer only), tqdm
+# Steps 3, 4 (GPU): + torch, peft, accelerate, datasets
+numpy>=1.24
+pandas>=2.0
+pyarrow>=14
+matplotlib>=3.7
+tqdm>=4.66
+packaging>=23
+transformers>=4.51      # Qwen3 support starts at 4.51 (tested on 5.x as well)
+torch>=2.2
+peft>=0.12
+accelerate>=0.34
+datasets>=2.19
+# re-profiling the time proxy (performance_profiling/fit_time_proxy.py)
+scipy>=1.10
+scikit-learn>=1.4
+# tests
+pytest>=7
