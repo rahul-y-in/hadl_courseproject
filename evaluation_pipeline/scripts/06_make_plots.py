@@ -83,6 +83,7 @@ def main():
     written += plotting.plot_quality_vs_time(table, fig_dir)
     written += plotting.plot_metric_vs_budget(table, fig_dir)
     written += plotting.plot_pipeline_overhead(read_csv(res / "overhead_components.csv"), fig_dir)
+    written += plotting.plot_covariance_diagnostic(read_csv(res / "covariance_diagnostic.csv"), fig_dir)
     if not table.empty:
         for split in table["split"].unique():
             runs = table.loc[table["split"] == split, "run_id"].unique()

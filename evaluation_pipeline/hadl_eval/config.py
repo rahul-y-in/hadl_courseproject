@@ -26,6 +26,15 @@ PROFILING_CSV = Path(os.environ.get("HADL_PROFILING_CSV",
 # Optional (git-ignored *.pt files - only present on the machine that created them)
 SYNTH_EMBEDDINGS_PT = PROJECT_ROOT / "embedding_generation" / "odia_embeddings.pt"
 REAL_TRAIN_EMBEDDINGS_PT = PROJECT_ROOT / "embedding_generation" / "odia_real_train_embeddings.pt"
+LR_POOL_EMBEDDINGS_PT = PROJECT_ROOT / "low_rank_method" / "odia_low_rank_run" / "final_weighted_train_draws_embeddings.pt"
+
+# The *.pt embedding files are git-ignored; they live in the team Google Drive folder and are
+# downloaded on demand (gdown) by the covariance diagnostic. Drive file ids per local path:
+TEAM_DRIVE_FOLDER = "https://drive.google.com/drive/folders/11sPbsrO8gDA4w0HTX4zh_WlH3ocpadjd"
+DRIVE_FILE_IDS = {
+    SYNTH_EMBEDDINGS_PT: "1sXuHpqZ-M-_5QHjhSsCRqevTlfpoZBGZ",      # embedding_generation/odia_embeddings.pt
+    LR_POOL_EMBEDDINGS_PT: "1x_53L13_aqcVgoHSligzWMbOW7zhcDfJ",    # low_rank_method/odia_low_rank_run/...
+}
 
 # A copy of the Qwen3 tokenizer is committed with the teammates' adapters; it is used as
 # an offline fallback when the Hugging Face Hub is unreachable.

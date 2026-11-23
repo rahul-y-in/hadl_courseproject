@@ -81,7 +81,8 @@ def main():
         {"budgets_sec": budgets, "real_train_proxy_sec": real_cost_sec,
          "budget_x_real": [b / real_cost_sec for b in budgets]}, indent=2))
     diag = CovarianceDiagnostic.try_create()
-    print("Covariance diagnostic:", "enabled" if diag else "disabled (embedding .pt files not found)")
+    print("Covariance diagnostic in step 2:", "enabled" if diag else
+          "skipped (embedding .pt files not present yet; step 7 fetches them and runs it)")
 
     table = []
     for b in budgets:

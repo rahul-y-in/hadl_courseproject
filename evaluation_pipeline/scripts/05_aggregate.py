@@ -76,9 +76,17 @@ def main():
         sel.to_csv(out / "selection_summary.csv", index=False)
 
     table = build_results_table(train, evals, sel)
+    cov_csv = out / "covariance_diagnostic.csv"          # written by step 7 (optional)
+    if not table.empty and cov_csv.is_file():
+        cov = pd.read_csv(cov_csv)
+        cov = cov[cov["kind"] == "subset"][["run_id", "rel_dist_pca", "rel_dist_full"]]
+        cov = cov.rename(columns={"rel_dist_pca": "cov_shift_pca", "rel_dist_full": "cov_shift_full"})
+        table = table.drop(columns=[c for c in ("cov_shift_pca", "cov_shift_full") if c in table.columns]) \
+                     .merge(cov, on="run_id", how="left")
     if not table.empty:
         table.to_csv(out / "results_table.csv", index=False)
-        compact = ["run_id", "split", "exact_match", "token_f1", "char_f1", "contains_gold", "num_train_examples",
+        compact = ["run_id", "split", "exact_match", "token_f1", "char_f1", "contains_gold", "cov_shift_pca",
+                   "num_train_examples",
                    "predicted_training_time_sec", "actual_wall_clock_sec", "proxy_error_pct"]
         (out / "results_table.md").write_text(to_markdown(table[[c for c in compact if c in table.columns]]))
         agg = seed_aggregate(table)

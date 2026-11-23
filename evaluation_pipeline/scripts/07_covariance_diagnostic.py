@@ -1,18 +1,20 @@
-"""Step 7 (optional, CPU only, run AFTER the Kaggle/Colab run) - covariance-shift diagnostic.
+"""Step 7 - covariance-shift diagnostic (runs automatically at the end of run_pipeline.sh).
 
 How close is each method's selected synthetic subset to the covariance of the real IndicQA
 train data? This is the quantity covariance matching minimises, so it shows whether
 covariance matching really shaped each subset and whether the time-aware knapsack kept or
-undid that. No GPU and no re-training needed: it only reads the subsets the run saved.
+undid that. It only reads the subsets saved in step 2 - no training needed.
 
-Needs the two git-ignored embedding files (ask Aditya Jain / Vanshika):
-    embedding_generation/odia_embeddings.pt             (~665 MB, 216,394 x 768, all synthetic rows)
-    embedding_generation/odia_real_train_embeddings.pt  (~3 MB,   886 x 768, real train rows;
-                                                         written by covariance_matching.py)
+Embedding files (all git-ignored *.pt) are made available automatically:
+    embedding_generation/odia_embeddings.pt             downloaded from the team Drive (~665 MB)
+    embedding_generation/odia_real_train_embeddings.pt  not in the Drive -> created with
+                                                         covariance_matching.load_or_embed_real()
+                                                         (needs final_weighted_train_draws_embeddings.pt,
+                                                         also downloaded from the Drive)
+Pass --no_fetch to only use files that are already present.
 
-Usage after the Kaggle run (see README section "After the GPU run: covariance diagnostic"):
-    unzip hadl_results.zip -d kaggle_run           # -> kaggle_run/outputs/...
-    python evaluation_pipeline/scripts/07_covariance_diagnostic.py --outputs kaggle_run/outputs
+Usage (run_pipeline.sh calls it as step 7; standalone on any run's outputs folder):
+    python evaluation_pipeline/scripts/07_covariance_diagnostic.py [--outputs <run>/outputs]
 
 Writes into <outputs>/results/ and <outputs>/figures/:
     covariance_diagnostic.csv / .md       one row per subset + reference rows
@@ -56,6 +58,8 @@ def main():
     ap.add_argument("--synth_emb", default=str(config.SYNTH_EMBEDDINGS_PT))
     ap.add_argument("--real_emb", default=str(config.REAL_TRAIN_EMBEDDINGS_PT))
     ap.add_argument("--pca_dim", type=int, default=64, help="PCA dimension (64 = covariance_matching.py default)")
+    ap.add_argument("--no_fetch", action="store_true",
+                    help="do not download from the team Drive / create the real embeddings if files are missing")
     ap.add_argument("--all_budgets", action="store_true",
                     help="use every budget folder found, not only those listed in selections/budgets.json")
     args = ap.parse_args()
@@ -64,11 +68,20 @@ def main():
     sel_dir = out / "selections"
     if not sel_dir.is_dir():
         raise SystemExit(f"{sel_dir} not found - point --outputs at the run's 'outputs' folder")
+    missing = [p for p in (args.synth_emb, args.real_emb) if not Path(p).is_file()]
+    if missing and not args.no_fetch:
+        from hadl_eval import embedding_files
+        if not Path(args.synth_emb).is_file():
+            if Path(args.synth_emb).resolve() != Path(config.SYNTH_EMBEDDINGS_PT).resolve():
+                raise SystemExit(f"{args.synth_emb} not found")
+            embedding_files.fetch_from_drive(config.SYNTH_EMBEDDINGS_PT)
+        if not Path(args.real_emb).is_file():
+            if Path(args.real_emb).resolve() != Path(config.REAL_TRAIN_EMBEDDINGS_PT).resolve():
+                raise SystemExit(f"{args.real_emb} not found")
+            embedding_files.ensure_real_train_embeddings()
     for p in (args.synth_emb, args.real_emb):
         if not Path(p).is_file():
-            raise SystemExit(f"Embedding file missing: {p}\n"
-                             "Ask Aditya Jain (odia_embeddings.pt) / Vanshika (odia_real_train_embeddings.pt) "
-                             "and put them in embedding_generation/, or pass --synth_emb / --real_emb.")
+            raise SystemExit(f"Embedding file missing: {p} (run without --no_fetch to download/create it)")
 
     budgets = None
     budgets_json = sel_dir / config.BUDGETS_JSON_NAME

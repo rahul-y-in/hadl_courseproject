@@ -11,29 +11,30 @@ data splits         (LR pool)            ranking               c_i per example  
         \_______________________________________|______________________|__________________/
                                                 v
                            evaluation_pipeline/ (this folder)
-   01 costed pool -> 02 budgeted selection (5 methods) -> 03 train -> 04 evaluate -> 05 tables -> 06 figures
+   00 re-profile (optional) -> 01 costed pool -> 02 budgeted selection (5 methods) -> 03 train -> 04 evaluate
+   -> 07 covariance-shift diagnostic -> 05 tables -> 06 figures
 ```
 
-Everything except steps 3 and 4 runs on a laptop CPU in about 2 minutes. Steps 3 and 4 need one GPU (Colab A100/L4/T4 or Kaggle 2×T4).
+Steps 1, 2, 5 and 6 run on a laptop CPU in about 2 minutes. Steps 0, 3 and 4 need a GPU (Kaggle 2×T4, or Colab A100/L4/T4). Step 7 downloads ~780 MB from the team Drive and needs a few minutes.
+
+**No file in the other team members' folders is modified.** Everything here lives in `evaluation_pipeline/`, and the teammates' scripts are imported or run unchanged.
 
 ---
 
-## 1. Quick start
-
-### On Kaggle (free 2×T4), from this branch
+## 1. Quick start: Kaggle (free 2×T4)
 
 1. Open https://www.kaggle.com/code → **New Notebook** → **File → Import Notebook**, and give it this link:
-   `https://github.com/rahul-y-in/hadl_courseproject/blob/claude/dazzling-gauss-bqp5gy/evaluation_pipeline/notebooks/run_pipeline_kaggle.ipynb`
-   If the link option is not offered, download that file from GitHub and upload it instead. The notebook itself clones the code from this branch.
+   `https://github.com/pratyushk22/hadl_courseproject/blob/main/evaluation_pipeline/notebooks/run_pipeline_kaggle.ipynb`
+   If the link option is not offered, download that file from GitHub and upload it instead. The notebook itself clones the code from `main` of `pratyushk22/hadl_courseproject`.
 2. In the right-hand panel, open **Settings**:
    - **Accelerator:** GPU T4 x2
    - **Internet:** On (needs a phone-verified Kaggle account)
-3. **Save Version → Save & Run All (Commit)**. This runs unattended for up to 12 h. The default configuration should take roughly 3–5 h; this is an estimate.
-4. Results appear in the notebook's **Output** tab (`outputs/` and `hadl_results.zip`).
+   - **Persistence:** Files only
+   - **Environment:** Pin to original environment
+3. **Save Version → Save & Run All (Commit)**. This runs unattended for up to 12 h. Our run took about 3 h.
+4. Results appear in the notebook's **Output** tab: `outputs/`, `hadl_results.zip` and `pipeline.log`. The notebook also displays the main tables and figures at the end, including the covariance diagnostic.
 
-To have Kaggle commit the results back to this branch:
-- add a Kaggle secret `GITHUB_TOKEN` (a GitHub token with *Contents: read & write* on the repo);
-- set `PUSH_RESULTS_TO_BRANCH = True` in the notebook's first code cell.
+**Nothing has to be run afterwards.** All steps run inside the notebook, including the covariance-shift diagnostic (step 7).
 
 The notebook detects the hardware and sets these automatically:
 
@@ -42,17 +43,20 @@ The notebook detects the hardware and sets these automatically:
 | `GPUS=2` | — | Two single-GPU processes, each training or evaluating different runs. Every run is still timed on one GPU, as the proxy assumes. |
 | `BATCH=2 ACCUM=8` | effective batch 16 | Fits 16 GB. |
 | `EVAL_BS=4` | — | Fits 16 GB. |
-| dtype | fp16 | T4 has no bf16. |
+| dtype | fp16 | The T4 has no native bf16 (see §5, item 10). |
 
-Versions are pinned to ones tested with this pipeline: `transformers 4.57.*`, `peft 0.22.*`.
+Versions are pinned to ones tested with this pipeline: `transformers 4.57.*`, `peft 0.22.*`. pip prints dependency conflicts for `gradio`, `diffusers` and `pillow`; they are harmless, because those preinstalled packages are not used.
 
-### On Colab
+**Optional: pushing results to GitHub from Kaggle.**
+- Add a Kaggle secret `GITHUB_TOKEN`: a GitHub token with *Contents: read & write* on `pratyushk22/hadl_courseproject`.
+- Set `PUSH_RESULTS_TO_BRANCH = True` in the first code cell.
+- The results are pushed to a **separate branch** (`RESULTS_BRANCH = "kaggle-results"`), never to `main`.
 
-Open `notebooks/run_pipeline_colab.ipynb` in Colab or Kaggle and run all cells.
+### Colab
 
-> **Before running:** the notebook clones `main`. While this work is still on its feature branch, set `BRANCH` in the first cell to that branch.
+Open `notebooks/run_pipeline_colab.ipynb` in Colab (A100 recommended) and run all cells. On a 16 GB GPU, add `BATCH=2 ACCUM=8 EVAL_BS=4` to the run command, as described in the notebook.
 
-The notebook runs this single command:
+### The command both notebooks run
 
 ```bash
 PROFILE=1 SEEDS="42" REFERENCE="real_only" bash evaluation_pipeline/run_pipeline.sh
@@ -68,81 +72,30 @@ PROFILE=1 SEEDS="42" REFERENCE="real_only" bash evaluation_pipeline/run_pipeline
 | `REFERENCE` | — | `real_only` also fine-tunes on the real data alone. |
 | `GPUS` | `1` | Use `2` on Kaggle 2×T4. The job list is split across GPUs, with one single-GPU process each. |
 | `BATCH`, `ACCUM` | `4`, `4` | Use `2`, `8` on 16 GB GPUs. The effective batch is the same, and the proxy cost uses `BATCH`. |
-| `DTYPE` | `auto` | `auto` picks bf16 on A100/L4 and fp16 on T4. Use `fp32` if fp16 gives NaN losses. |
+| `DTYPE` | `auto` | `auto` picks bf16 on GPUs with native bf16 (A100/L4/H100) and fp16 otherwise (T4/P100). Use `fp32` if fp16 gives NaN losses. |
 | `EVAL_BS` | `8` | Evaluation batch size. Use 4 on a T4. |
 | `MODEL_ID`, `TRAIN_EXTRA`, `EVAL_EXTRA` | — | Model override and extra arguments for scripts 03 and 04 (debugging; used by the smoke test). |
-| `STEPS` | `0 1 2 3 4 5 6` | For example, `STEPS="5 6"` only re-aggregates and re-plots. |
+| `STEPS` | `0 1 2 3 4 5 6 7` | Which steps to run. They always execute in the order 0 1 2 3 4 7 5 6. For example, `STEPS="5 6"` only re-aggregates and re-plots. |
 
-Finished runs and evaluations are skipped automatically. After a Colab disconnect, re-running the same command resumes where it stopped.
+Finished runs and evaluations are skipped automatically, so re-running the command in the same session resumes where it stopped. A new Kaggle commit run starts from scratch.
 
-### Step by step
+### Step by step (any machine)
 
 ```bash
 cd evaluation_pipeline
 pip install -r requirements.txt
-python scripts/01_build_pool.py          # CPU, ~90 s:  integrate LR + CM + time proxy
+python scripts/01_build_pool.py               # CPU, ~90 s:  integrate LR + CM + time proxy
 python scripts/02_select_subsets.py --sweep   # CPU, ~2 s: one subset per method
 python scripts/03_train.py --reference_runs real_only   # GPU
-python scripts/04_evaluate.py            # GPU: base model + every adapter, val + test
-python scripts/05_aggregate.py           # CPU: tables + significance tests + proxy error
-python scripts/06_make_plots.py          # CPU: all figures (PNG + PDF)
+python scripts/04_evaluate.py                 # GPU: base model + every adapter, val + test
+python scripts/07_covariance_diagnostic.py    # covariance shift of every subset (downloads embeddings)
+python scripts/05_aggregate.py                # CPU: tables + significance tests + proxy error
+python scripts/06_make_plots.py               # CPU: all figures (PNG + PDF)
 ```
 
-Every script has `--help`.
+Every script has `--help`. Step 0 (re-profiling) is only run through `run_pipeline.sh`; see §5, item 10.
 
 ---
-
-## After the GPU run: covariance diagnostic (optional, CPU only)
-
-`scripts/07_covariance_diagnostic.py` measures how close each method's selected synthetic subset is to the covariance of the real training data. This is the quantity covariance matching minimises. It answers questions like:
-- Do the LR+CM subsets really stay close to the real data?
-- Does the time-aware knapsack keep or undo the covariance matching?
-
-It needs **no GPU and no re-training**: it only reads the subsets the Kaggle or Colab run saved, and it takes about 10 seconds plus the time to load the embeddings.
-
-**1. Get the results of the run.**
-- **If the run pushed its results** (`PUSH_RESULTS_TO_BRANCH = True`), just pull the branch. The results are already in `evaluation_pipeline/outputs/`.
-- **Otherwise,** download `hadl_results.zip` from the Kaggle version's **Output** tab and unzip it to a folder *outside* the repository, for example:
-  ```bash
-  unzip hadl_results.zip -d ~/hadl_kaggle_run        # -> ~/hadl_kaggle_run/outputs/...
-  ```
-  On Windows, right-click → Extract All works too.
-
-**2. Get the code** (skip if you already have the branch):
-```bash
-git clone -b claude/dazzling-gauss-bqp5gy https://github.com/rahul-y-in/hadl_courseproject.git
-cd hadl_courseproject
-```
-
-**3. Get the two embedding files.** They are not on GitHub because `.gitignore` excludes `*.pt`. Put them in `embedding_generation/`:
-
-| File | Who has it | Size |
-|---|---|---|
-| `embedding_generation/odia_embeddings.pt` | Aditya Jain (all 216,394 synthetic rows) | ~665 MB |
-| `embedding_generation/odia_real_train_embeddings.pt` | Vanshika (written by `covariance_matching.py`) | ~3 MB |
-
-The easiest route is to ask Vanshika for the second file. To recreate it yourself instead, run `python covariance_matching/covariance_matching.py` once. It also needs `low_rank_method/odia_low_rank_run/final_weighted_train_draws_embeddings.pt` from Aditya Jain, plus the e5 embedding model, which is downloaded automatically.
-
-**4. Install the CPU packages and run:**
-```bash
-pip install numpy pandas pyarrow matplotlib torch
-python evaluation_pipeline/scripts/07_covariance_diagnostic.py --outputs ~/hadl_kaggle_run/outputs
-# results pushed to the branch instead:  python evaluation_pipeline/scripts/07_covariance_diagnostic.py
-```
-If the `.pt` files are elsewhere, add `--synth_emb PATH --real_emb PATH`. Use `--all_budgets` to include every budget folder.
-
-**5. Output** (written into the same `outputs/` folder):
-- `results/covariance_diagnostic.csv` and `.md`: one row per selected subset, plus reference rows for the whole low-rank pool and the covariance-matched candidates (all, top 1,772, top 3,544).
-- `figures/covariance_shift_b<B>.png` and `.pdf`: a bar chart for each budget.
-
-**How to read it.** Each value is ‖Cov(subset) − Cov(real)‖_F / ‖Cov(real)‖_F, and lower means closer to the real data.
-- The **PCA-space** column is what covariance matching optimises (64 dimensions, as in `covariance_matching.py`).
-- The **full-space** column (768 dimensions) also covers the directions it does not control.
-- Comparisons to make:
-  - `quality_only` vs `proposed_knapsack`: what the time-aware choice does to the match.
-  - `cov_match_only` vs `low_rank_only`: the effect of covariance matching on its own.
-  - Both against `random` and the grey reference rows.
-- The distance alone does not show better QA scores. Read it together with the F1 results.
 
 ## 2. What is compared
 
@@ -163,12 +116,12 @@ All methods get **the same synthetic training-time budget B** (proxy-predicted s
 - `lr_score` is the low-rank stage's `sampling_probability`, which is proportional to `max(pred_loss,0) + λ·residual²`. `lr_pct` is its percentile rank.
 - `cm_score = 1 − cm_rank / 7088`, from the greedy covariance-matching order. Rows that are not ranked get 0.
 - `u_i = α·lr_pct + (1−α)·cm_score`, with α = 0.5 (`--alpha` in step 1).
-- `c_i` = Yatika's proxy, `T_step(B=4, L_i)/4`. Here `L_i` is the **exact tokenised training length** (prompt + answer, after truncation).
+- `c_i` = Yatika's proxy, `T_step(B, L_i)/B`. Here `L_i` is the **exact tokenised training length** (prompt + answer, after truncation) and `B` the micro-batch size.
 - `quality_only` and `proposed_knapsack` choose from the same 7,088 covariance-matched candidates. The only difference between them is whether the time cost is used, which isolates the contribution of the time proxy.
 
 **Knapsack solver** (`hadl_eval/knapsack.py`): an exact DP on costs discretised into 2,000 units (rounded **up**, so the solution is always feasible), plus a greedy u/c pass. The better of the two is kept, and any remaining budget is filled greedily. The tests check it against brute force.
 
-**Budget choice.** Absolute seconds depend on the GPU the proxy was profiled on. The default budget is therefore `1.0 × (proxy time of the real train split)`. With the committed MPS proxy this is 8,605 s, and the methods select 1.6k–3.4k examples. Re-profiling on the A100 changes the seconds but keeps the same meaning.
+**Budget choice.** Absolute seconds depend on the GPU the proxy was profiled on. The default budget is therefore `1.0 × (proxy time of the real train split)`. This was 490 s on the Kaggle T4s (fp16) and 8,605 s with the committed Apple-MPS proxy. In both cases the methods select roughly 1.5k–3.5k examples.
 
 ---
 
@@ -193,6 +146,28 @@ All methods get **the same synthetic training-time budget B** (proxy-predicted s
 | Run level | Proxy-predicted total vs measured wall-clock training time: MAPE, signed error, R², Spearman. Also a **leave-one-out calibrated MAPE**, which shows the proxy error once its hardware constant is fitted. |
 | Micro-batch level | Every forward+backward is timed (CUDA-synchronised) together with its real `(B, padded L)`. This tests the functional form of the proxy, not only its total. |
 
+### Covariance shift (step 7, `scripts/07_covariance_diagnostic.py`)
+
+For every selected subset, and for reference sets (the whole low-rank pool and the covariance-matched candidates: all, top 1,772, top 3,544):
+
+**‖Cov(subset) − Cov(real)‖_F / ‖Cov(real)‖_F**, where lower means closer to the real training data.
+
+It is computed in two spaces:
+- **PCA space**: the 64-dim space of the real embeddings that covariance matching optimises;
+- **full space**: all 768 dims, which also covers the directions covariance matching does not control.
+
+The columns `cov_shift_pca` and `cov_shift_full` are added to `results_table.csv`.
+
+Where the embeddings come from (all `*.pt` files are git-ignored):
+
+| File | Source |
+|---|---|
+| `embedding_generation/odia_embeddings.pt` (216,394 × 768, ~665 MB) | **Downloaded from the team Google Drive** (`gdown`) |
+| `low_rank_method/odia_low_rank_run/final_weighted_train_draws_embeddings.pt` (~114 MB) | **Downloaded from the team Drive**; needed for the recipe parity check below |
+| `embedding_generation/odia_real_train_embeddings.pt` (886 × 768) | Not in the Drive, so it is **created with Vanshika's own `covariance_matching.load_or_embed_real()`**. Same e5 model and recipe. It aborts unless re-embedding 8 stored rows gives cosine ≥ 0.99. |
+
+The Drive file ids are in `hadl_eval/config.py` (`DRIVE_FILE_IDS`). Existing files are reused. If the step fails (for example, the Drive temporarily refuses automated downloads), the pipeline prints the error and carries on, because this step is optional. Re-run it alone with `STEPS="7 5 6" bash run_pipeline.sh`.
+
 ### Efficiency
 
 - Selection time per method
@@ -208,15 +183,18 @@ All methods get **the same synthetic training-time budget B** (proxy-predicted s
 ```
 outputs/
   pool/            candidate_pool.parquet, random_pool.parquet, real_train.parquet, pool_report.json   (git-ignored, regenerable)
+  profiling/       profiling_results.csv, time_proxy_model.json   (when PROFILE=1)
   selections/      budgets.json, budget_sweep.csv, b<B>/<run_id>.parquet, b<B>/selection_summary.json
   runs/<run_id>/   adapter/, training_metrics.json, log_history.json, step_timings.csv
   eval/<run_id>/   {validation,test}_predictions.jsonl, {validation,test}_metrics.json
   results/         results_table.{csv,md}, results_by_method.{csv,md}, significance_vs_random.{csv,md},
-                   proxy_runs.csv, proxy_error_summary.json, overhead_components.csv, selection_summary.csv
+                   proxy_runs.csv, proxy_error_summary.json, overhead_components.csv, selection_summary.csv,
+                   covariance_diagnostic.{csv,md}
   figures/         *.png (200 dpi) + *.pdf (vector, for the report)
+  logs/            per-GPU training / evaluation logs, covariance_diagnostic.log
 ```
 
-Run ids look like `proposed_knapsack_b8605_s42`, meaning method, budget in seconds, and seed.
+Run ids look like `proposed_knapsack_b490_s42`, meaning method, budget in seconds, and seed.
 
 | Figure | Question it answers |
 |---|---|
@@ -232,17 +210,36 @@ Run ids look like `proposed_knapsack_b8605_s42`, meaning method, budget in secon
 | `selection_token_lengths_b<B>` | Length distribution of the selected examples. |
 | `utility_vs_cost_b<B>` | Why the knapsack picks more examples (high u/c). |
 | `budget_sweep_total_utility`, `budget_sweep_num_selected` | The selection objective across budgets (no GPU needed). |
-| `budget_sweep_cov_shift_rel` | Covariance distance to the real data, when the embedding `.pt` files are present during step 2. |
-| `covariance_shift_b<B>` | The same per method, computed after the run by `scripts/07_covariance_diagnostic.py`. |
+| `covariance_shift_b<B>` | Covariance distance of each method's subset to the real data (step 7). |
 | `pipeline_overhead` | Selection pipeline overhead plus training cost. |
 
-**Already produced (CPU):** `outputs/selections/` and the selection and proxy figures in `outputs/figures/` are committed. At the default budget, the knapsack selects **3,433** examples with Σu = 1,902. The no-time-proxy baseline selects 1,630 examples with Σu = 1,223, and random selects 2,152 examples with Σu = 447.
+**What is committed in `outputs/`:**
+- `selections/` and `figures/` come from an early **CPU dry run with the committed Apple-MPS proxy** (budget `b8605`). They illustrate the selection step only; no model was trained on these subsets.
+- `covariance_analysis_kaggle_b490/` holds the covariance diagnostic of the subsets that **were** trained in the Kaggle run below. See its own README for how it was produced.
 
 ---
 
-## 5. Integration issues found and fixed
+## 5. Results of the Kaggle 2×T4 run (seed 42, budget 1.0× = 490 s, fp16)
 
-These were found while connecting the stages. The original files are left untouched, and the corrected logic lives in `hadl_eval/`.
+| Run (test split, 176 questions) | EM | Token F1 | Char F1 | Actual training time | Cov. shift (PCA) |
+|---|---|---|---|---|---|
+| Base model, no training | 9.1 | 30.4 | 47.6 | — | — |
+| Real data only | 22.7 | 44.0 | 57.5 | 30 min | — |
+| Random selection | 26.1 | 51.1 | 63.5 | 73 min | 0.684 |
+| LR + CM (no time proxy) | 26.1 | 50.2 | 63.9 | 67 min | 0.429 |
+| **Proposed knapsack** | **29.6** | **52.2** | **64.7** | 74 min | 0.459 |
+
+What these results show:
+- **Fine-tuning and synthetic data help significantly.** Every fine-tuned run beats the base model (+14 to +22 F1). Random synthetic data beats real-only by +7.1 F1 (p = 0.03, paired passage-clustered bootstrap).
+- **The proposed method is best on every metric**, on both test and validation (validation F1: 52.4 vs 52.3 random vs 50.1 LR+CM). The differences between the three selection methods are **not statistically significant** with one seed: proposed vs random gives +1.1 F1 on test, p = 0.52. More seeds (`SEEDS="42 43 44"`) are needed to separate them.
+- **Time proxy.** Actual training took 4.3× the predicted time (MAPE 76%). The proxy profiles 2 decoder layers × 14 and leaves out the 151k-vocabulary output layer, gradient-checkpointing recomputation and the optimizer. It still **ranks costs almost perfectly**: Spearman 1.0 across runs and 0.97 across 4,791 micro-batches, and the leave-one-out calibrated MAPE is about 10%. Equal *predicted* budgets were not exactly equal in *actual* time: the knapsack's many short examples took 11% longer than LR+CM.
+- **Covariance shift.** Covariance matching halves the distance to the real data compared with random (0.348 for CM-only vs 0.684). Low-rank selection alone moves *away* from it (0.789). The knapsack keeps most of the matching (0.459 vs 0.429 without the time proxy). In this run, the subset with the closest covariance was not the one with the highest F1.
+
+---
+
+## 6. Integration issues found and fixed
+
+These were found while connecting the stages. The teammates' files are left untouched, and the corrected logic lives in `hadl_eval/` and `run_pipeline.sh`.
 
 1. **Placeholder scores.** `model_training/prepare_training_subsets.py` looks for `low_rank_score` / `cov_match_score` columns that no stage writes. It therefore fell back to random "synthetic_fallback" scores (see `subset_selection_summary.json`). This pipeline uses the real LR probabilities and the CM ranking.
 2. **Empty passages.** The synthetic files call the passage `paragraph`, but `assign_time_costs.py` and `train_qwen_lora.py` read `context`. That silently gave an **empty passage**, so models were trained without context and costs were underestimated. All data now goes through `hadl_eval/data.py` with one schema.
@@ -250,22 +247,30 @@ These were found while connecting the stages. The original files are left untouc
 4. **512-token limit removed the answer.** Odia costs about 2 Qwen tokens per character. Real test passages have a median of ~1,300 tokens and a maximum of ~3,700. Evaluation now uses 4,096 input tokens, so no passage is cut. Training uses 2,048, which is the proxy's cap.
 5. **Different train and eval prompts.** Training and evaluation used different system prompts. Both now use `hadl_eval/prompts.py`.
 6. **Synthetic answer format.** Synthetic answers always end with `।`, while IndicQA answers are bare spans. The trailing punctuation is now stripped from targets.
-7. **fp16 on T4.** fp16 training on T4 needs the LoRA weights in fp32 (otherwise "Attempting to unscale FP16 gradients"). The weights are now cast.
+7. **fp16 LoRA weights.** fp16 training on T4 needs the LoRA weights in fp32 (otherwise "Attempting to unscale FP16 gradients"). The weights are now cast.
 8. **Dual-GPU split.** `device_map="auto"` on 2×T4 splits the model across GPUs and distorts timings. Now each process uses exactly one GPU, and two GPUs run different jobs in parallel (`GPUS=2`).
 9. **Evaluation size.** Evaluation previously used 10 validation examples with batch size 1. It now runs the full splits batched, with CIs.
+10. **Emulated bf16 on T4.** `torch.cuda.is_bf16_supported()` also returns True on T4/P100, where bf16 is only emulated and much slower.
+    - Training (`hadl_eval/modeling.py`) uses bf16 only on GPUs with compute capability ≥ 8.0, and fp16 otherwise.
+    - For profiling, `run_pipeline.sh` runs Yatika's `performance_profiling/profile_hardware.py` **unchanged** through `runpy`. It first reports bf16 as unsupported on such GPUs, so profiling uses the same fp16 as training.
+    - In the Kaggle run this cut the proxy's real-data epoch time from 5,028 s (emulated bf16) to 490 s.
 
 The candidate pool was also checked for leakage. **0** of the 33,104 candidates share an 8-word shingle with a real validation or test passage, and 1 of the 30,000 random-pool rows did and was dropped.
 
 ---
 
-## 6. Expected GPU time (rough estimates)
+## 7. GPU time
 
-| Hardware | One training run (~4.3k rows, 1 epoch) | Evaluation per model (371 questions) | Default pipeline (3 methods + real_only + base) |
-|---|---|---|---|
-| A100 40/80 GB | ~15–30 min | ~3–6 min | ~2 h |
-| L4 / single T4 | ~1–2 h | ~10–20 min | ~6–8 h. Use `BUDGET_X_REAL=0.5` or fewer methods. |
+Measured in the Kaggle 2×T4 run above (default settings, 4 training runs + 5 evaluated models): **about 3 h in total.**
 
-These are estimates; the real numbers are measured and reported by the pipeline itself.
+| Part | Time |
+|---|---|
+| Each 3-method training run | 67–74 min |
+| `real_only` training | 30 min |
+| Evaluation per model (validation + test) | ~8 min |
+| Covariance diagnostic (step 7) | a few minutes: download ~780 MB, embed 886 rows |
+
+On a single A100, expect each training run to take noticeably less time; this is an estimate, not measured.
 
 Troubleshooting:
 
@@ -275,25 +280,27 @@ Troubleshooting:
 | OOM during evaluation | `EVAL_BS=2`. The OOM handler also splits batches automatically. |
 | NaN loss with fp16 | `DTYPE=fp32`. |
 | No internet for the tokenizer | The Qwen3 tokenizer copy in `model_training/checkpoints/*/final_adapter` is used automatically. |
+| Step 7: Drive download refused | Retry later with `STEPS="7 5 6" bash run_pipeline.sh` (same session), or place the two `.pt` files at the paths in §3 manually. |
 
 ---
 
-## 7. Code layout and tests
+## 8. Code layout and tests
 
 ```
-hadl_eval/   config.py (paths, hyper-parameters, colours) · data.py · prompts.py · text_utils.py
-             time_proxy.py · pool.py · knapsack.py · selection.py · diagnostics.py
+hadl_eval/   config.py (paths, hyper-parameters, colours, Drive file ids) · data.py · prompts.py · text_utils.py
+             time_proxy.py · pool.py · knapsack.py · selection.py · diagnostics.py · embedding_files.py
              modeling.py · training.py · inference.py · metrics.py · results.py · plotting.py
 scripts/     01_build_pool · 02_select_subsets · 03_train · 04_evaluate · 05_aggregate · 06_make_plots
-             07_covariance_diagnostic (optional, after the GPU run)
-tests/       unit tests (pytest) + smoke_end_to_end.sh (all 6 steps on CPU with a tiny random Qwen3)
+             07_covariance_diagnostic
+run_pipeline.sh   runs everything (incl. step 0 re-profiling and step 7)
+tests/       unit tests (pytest) + smoke_end_to_end.sh (steps 1-6 on CPU with a tiny random Qwen3)
 notebooks/   run_pipeline_kaggle.ipynb · run_pipeline_colab.ipynb
 configs/     overhead_times.json
 ```
 
 ```bash
-python -m pytest -q tests                      # 47 unit tests, ~5 s
+python -m pytest -q tests                      # unit tests, ~5 s
 bash tests/smoke_end_to_end.sh                 # full pipeline on CPU with a tiny model, incl. the 2-GPU split, ~5 min
 ```
 
-The smoke test runs training, evaluation, aggregation and plotting end to end without a GPU. Its scores are meaningless, because the tiny model is random. It exists to check that every code path executes. Set `HADL_OUTPUT_ROOT` to write outputs elsewhere, as the smoke test does.
+The smoke test runs training, evaluation, aggregation and plotting end to end without a GPU. Its scores are meaningless, because the tiny model is random. It exists to check that every code path executes. Step 7 is left out of the smoke test because it downloads ~780 MB. Set `HADL_OUTPUT_ROOT` to write outputs elsewhere, as the smoke test does.

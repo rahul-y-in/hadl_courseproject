@@ -10,7 +10,9 @@
 #   PROFILE=1 GPUS=2 BATCH=2 ACCUM=8 EVAL_BS=4 REFERENCE=real_only bash evaluation_pipeline/run_pipeline.sh
 #
 # Environment variables (all optional):
-#   STEPS          which steps to run (default "0 1 2 3 4 5 6"; step 0 runs only with PROFILE=1)
+#   STEPS          which steps to run (default "0 1 2 3 4 5 6 7"; step 0 runs only with PROFILE=1).
+#                  Order of execution: 0 1 2 3 4 7 5 6 (the covariance diagnostic, 7, runs before
+#                  the tables and plots so they include it; it is optional and never fails the run)
 #   PROFILE=1      re-profile Qwen3-1.7B LoRA step time on the local GPU and use that proxy
 #   PROXY_JSON     time-proxy json to use (default: performance_profiling/time_proxy_model.json)
 #   BUDGET_X_REAL  synthetic budget(s) as multiples of the real-train proxy time (default "1.0")
@@ -31,7 +33,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 PY="${PYTHON:-python}"
-STEPS="${STEPS:-0 1 2 3 4 5 6}"
+STEPS="${STEPS:-0 1 2 3 4 5 6 7}"
 SEEDS="${SEEDS:-42}"
 METHODS="${METHODS:-random quality_only proposed_knapsack}"
 REFERENCE="${REFERENCE:-}"
@@ -85,8 +87,20 @@ if has_step 0 && [[ "${PROFILE:-0}" == "1" ]]; then
   echo "=== Step 0: profile LoRA step time on this GPU and fit the time proxy"
   PROF_DIR="$OUT/profiling"
   mkdir -p "$PROF_DIR"
-  (cd "$PROF_DIR" && CUDA_VISIBLE_DEVICES=0 "$PY" "$ROOT/performance_profiling/profile_hardware.py" \
-                  && "$PY" "$ROOT/performance_profiling/fit_time_proxy.py")
+  # performance_profiling/profile_hardware.py is run UNCHANGED. Its dtype choice relies on
+  # torch.cuda.is_bf16_supported(), which is also True on T4/P100 where bf16 is only emulated
+  # (much slower) while training uses fp16 there. So, for this run only, report bf16 as
+  # unsupported on GPUs without native bf16 (compute capability < 8.0): profiling then uses
+  # fp16 exactly like training. Nothing is written to the teammate's folder.
+  (cd "$PROF_DIR" && CUDA_VISIBLE_DEVICES=0 "$PY" - "$ROOT/performance_profiling/profile_hardware.py" <<'PYEOF'
+import runpy, sys
+import torch
+if torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 8:
+    torch.cuda.is_bf16_supported = lambda *args, **kwargs: False
+sys.dont_write_bytecode = True
+runpy.run_path(sys.argv[1], run_name="__main__")
+PYEOF
+  ) && (cd "$PROF_DIR" && "$PY" "$ROOT/performance_profiling/fit_time_proxy.py")
   PROXY_JSON="$PROF_DIR/time_proxy_model.json"
   export HADL_PROFILING_CSV="$PROF_DIR/profiling_results.csv"
   echo "Using freshly fitted proxy: $PROXY_JSON"
@@ -123,6 +137,17 @@ if has_step 4; then
   echo "=== Step 4: evaluate on the real validation + test splits on $GPUS GPU(s)"
   run_sharded eval "$PY" scripts/04_evaluate.py --splits validation test --dtype "$DTYPE" --batch_size "$EVAL_BS" \
         --model_id "$MODEL_ID" $EVAL_EXTRA
+fi
+
+if has_step 7; then
+  echo "=== Step 7: covariance-shift diagnostic (embeddings from the team Drive; optional)"
+  if ! CUDA_VISIBLE_DEVICES=0 "$PY" scripts/07_covariance_diagnostic.py --outputs "$OUT" \
+        > "$LOG_DIR/covariance_diagnostic.log" 2>&1; then
+    echo "!! covariance diagnostic failed (optional) - continuing. Last lines of $LOG_DIR/covariance_diagnostic.log:"
+    tail -n 15 "$LOG_DIR/covariance_diagnostic.log" || true
+  else
+    grep -E "^\| |Wrote|parity|\[drive\]" "$LOG_DIR/covariance_diagnostic.log" || true
+  fi
 fi
 
 if has_step 5; then

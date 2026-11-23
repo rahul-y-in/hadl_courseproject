@@ -16,5 +16,7 @@ datasets>=2.19
 # re-profiling the time proxy (performance_profiling/fit_time_proxy.py)
 scipy>=1.10
 scikit-learn>=1.4
+# covariance diagnostic (step 7): downloads the embedding files from the team Google Drive
+gdown>=5.0
 # tests
 pytest>=7
