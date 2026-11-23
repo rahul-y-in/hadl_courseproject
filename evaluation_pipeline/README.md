@@ -1,7 +1,5 @@
 # Evaluation pipeline: integration, metrics and plots
 
-**Owner:** Rahul Yadav (Person 6, Evaluation & Reporting). This covers pipeline integration, evaluation metrics and plotting results.
-
 This folder connects everyone's work into one reproducible pipeline and adds the evaluation and reporting layer:
 
 ```
@@ -16,8 +14,6 @@ data splits         (LR pool)            ranking               c_i per example  
 ```
 
 Steps 1, 2, 5 and 6 run on a laptop CPU in about 2 minutes. Steps 0, 3 and 4 need a GPU (Kaggle 2×T4, or Colab A100/L4/T4). Step 7 downloads ~780 MB from the team Drive and needs a few minutes.
-
-**No file in the other team members' folders is modified.** Everything here lives in `evaluation_pipeline/`, and the teammates' scripts are imported or run unchanged.
 
 ---
 
@@ -34,8 +30,6 @@ Steps 1, 2, 5 and 6 run on a laptop CPU in about 2 minutes. Steps 0, 3 and 4 nee
 3. **Save Version → Save & Run All (Commit)**. This runs unattended for up to 12 h. Our run took about 3 h.
 4. Results appear in the notebook's **Output** tab: `outputs/`, `hadl_results.zip` and `pipeline.log`. The notebook also displays the main tables and figures at the end, including the covariance diagnostic.
 
-**Nothing has to be run afterwards.** All steps run inside the notebook, including the covariance-shift diagnostic (step 7).
-
 The notebook detects the hardware and sets these automatically:
 
 | Setting | Value on 16 GB GPUs | Why |
@@ -45,7 +39,7 @@ The notebook detects the hardware and sets these automatically:
 | `EVAL_BS=4` | — | Fits 16 GB. |
 | dtype | fp16 | The T4 has no native bf16 (see §5, item 10). |
 
-Versions are pinned to ones tested with this pipeline: `transformers 4.57.*`, `peft 0.22.*`. pip prints dependency conflicts for `gradio`, `diffusers` and `pillow`; they are harmless, because those preinstalled packages are not used.
+Versions are pinned to ones tested with this pipeline: `transformers 4.57.*`, `peft 0.22.*`. pip prints dependency conflicts for `gradio`, `diffusers` and `pillow`; they are harmless because those preinstalled packages are not used.
 
 **Optional: pushing results to GitHub from Kaggle.**
 - Add a Kaggle secret `GITHUB_TOKEN`: a GitHub token with *Contents: read & write* on `pratyushk22/hadl_courseproject`.
@@ -93,7 +87,7 @@ python scripts/05_aggregate.py                # CPU: tables + significance tests
 python scripts/06_make_plots.py               # CPU: all figures (PNG + PDF)
 ```
 
-Every script has `--help`. Step 0 (re-profiling) is only run through `run_pipeline.sh`; see §5, item 10.
+Every script has `--help`. Step 0 (re-profiling) is only run through `run_pipeline.sh`.
 
 ---
 
