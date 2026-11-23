@@ -87,11 +87,7 @@ if has_step 0 && [[ "${PROFILE:-0}" == "1" ]]; then
   echo "=== Step 0: profile LoRA step time on this GPU and fit the time proxy"
   PROF_DIR="$OUT/profiling"
   mkdir -p "$PROF_DIR"
-  # performance_profiling/profile_hardware.py is run UNCHANGED. Its dtype choice relies on
-  # torch.cuda.is_bf16_supported(), which is also True on T4/P100 where bf16 is only emulated
-  # (much slower) while training uses fp16 there. So, for this run only, report bf16 as
-  # unsupported on GPUs without native bf16 (compute capability < 8.0): profiling then uses
-  # fp16 exactly like training. Nothing is written to the teammate's folder.
+  
   (cd "$PROF_DIR" && CUDA_VISIBLE_DEVICES=0 "$PY" - "$ROOT/performance_profiling/profile_hardware.py" <<'PYEOF'
 import runpy, sys
 import torch
