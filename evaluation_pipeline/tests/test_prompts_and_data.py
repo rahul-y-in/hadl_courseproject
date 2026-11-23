@@ -1,4 +1,4 @@
-"""Needs the Qwen3 tokenizer (downloaded, or the copy committed under model_training/)."""
+
 import sys
 from pathlib import Path
 
