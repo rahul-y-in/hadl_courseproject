@@ -24,7 +24,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--budget_sec", type=float, default=None, help="default: first budget of step 2")
     ap.add_argument("--seed", type=int, default=config.DEFAULT_SEEDS[0], help="seed whose subsets are drawn")
-    ap.add_argument("--proxy_json", default=str(config.TIME_PROXY_JSON))
+    ap.add_argument("--proxy_json", default=None,
+                    help="default: <outputs>/profiling/time_proxy_model.json if the run re-profiled, "
+                         "else performance_profiling/time_proxy_model.json")
     args = ap.parse_args()
 
     if args.budget_sec is None:
@@ -32,6 +34,12 @@ def main():
             args.budget_sec = config.resolved_budgets()[0]
         except FileNotFoundError:
             args.budget_sec = 0.0
+    prof_dir = config.OUTPUT_ROOT / "profiling"
+    if args.proxy_json is None:
+        own = prof_dir / "time_proxy_model.json"
+        args.proxy_json = str(own if own.is_file() else config.TIME_PROXY_JSON)
+    own_csv = prof_dir / "profiling_results.csv"
+    profiling_csv = own_csv if own_csv.is_file() else config.PROFILING_CSV
     fig_dir = config.FIGURES_DIR
     res = config.RESULTS_DIR
     written = []
@@ -60,7 +68,7 @@ def main():
     written += plotting.plot_budget_sweep(sweep, fig_dir)
     written += plotting.plot_budget_sweep(sweep, fig_dir, y="num_selected", ylabel="Examples selected")
     written += plotting.plot_covariance_shift(sweep, fig_dir)
-    written += plotting.plot_proxy_profile_fit(config.PROFILING_CSV, TimeProxy.from_json(args.proxy_json), fig_dir)
+    written += plotting.plot_proxy_profile_fit(profiling_csv, TimeProxy.from_json(args.proxy_json), fig_dir)
 
     # ---- training / evaluation figures (after GPU runs) ------------------------------
     table = read_csv(res / "results_table.csv")
