@@ -326,8 +326,11 @@ def plot_quality_vs_time(table: pd.DataFrame, out_dir: Path, metric: str = "toke
         fig, ax = plt.subplots(figsize=(7, 4.6))
         for m in method_order(t["method"]):
             s = t[t["method"] == m]
-            ax.errorbar(s["actual_wall_clock_sec"], s[metric],
-                        yerr=[s[metric] - s[f"{metric}_ci_low"], s[f"{metric}_ci_high"] - s[metric]],
+            x = s["actual_wall_clock_sec"].to_numpy(dtype=float)
+            v = s[metric].to_numpy(dtype=float)
+            lo = s[f"{metric}_ci_low"].to_numpy(dtype=float)
+            hi = s[f"{metric}_ci_high"].to_numpy(dtype=float)
+            ax.errorbar(x, v, yerr=np.vstack([v - lo, hi - v]),
                         fmt="o", ms=8, color=color(m), ecolor=color(m), elinewidth=1.2, capsize=3, label=label(m),
                         markeredgecolor=SURFACE, markeredgewidth=1.5)
         ax.set_xlabel("Actual training time (s)")
